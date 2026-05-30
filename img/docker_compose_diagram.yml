@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:15
+    labels:
+      "docker_compose_diagram.icon": "diagrams.onprem.database.Postgresql"
+      "docker_compose_diagram.cluster": "Хранилище"
+      "docker_compose_diagram.description": "Feature Store + MLflow DB + Airflow DB"
+
+  mlflow:
+    image: mlflow:latest
+    labels:
+      "docker_compose_diagram.icon": "diagrams.mlops.lifecycle.Mlflow"
+      "docker_compose_diagram.cluster": "Эксперименты"
+      "docker_compose_diagram.description": "Tracking Server & Model Registry"
+    depends_on:
+      - postgres
+
+  airflow-webserver:
+    image: airflow:latest
+    labels:
+      "docker_compose_diagram.icon": "diagrams.programming.workflow.Airflow"
+      "docker_compose_diagram.cluster": "Оркестрация"
+      "docker_compose_diagram.description": "DAG: monitor_mape, retrain_model_manual"
+    depends_on:
+      - postgres
+
+  app:
+    image: fastapi:latest
+    labels:
+      "docker_compose_diagram.icon": "diagrams.programming.framework.Fastapi"
+      "docker_compose_diagram.cluster": "Инференс"
+      "docker_compose_diagram.description": "FastAPI: /predict, /admin/reload, /metrics"
+    depends_on:
+      - mlflow
+      - postgres
+
+  prometheus:
+    image: prom/prometheus:latest
+    labels:
+      "docker_compose_diagram.icon": "diagrams.onprem.monitoring.Prometheus"
+      "docker_compose_diagram.cluster": "Мониторинг"
+      "docker_compose_diagram.description": "Сбор метрик с FastAPI"
+    depends_on:
+      - app
+
+  grafana:
+    image: grafana/grafana:latest
+    labels:
+      "docker_compose_diagram.icon": "diagrams.onprem.monitoring.Grafana"
+      "docker_compose_diagram.cluster": "Мониторинг"
+      "docker_compose_diagram.description": "Дашборды и алерты (MAPE, Latency)"
+    depends_on:
+      - prometheus

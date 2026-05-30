@@ -1,0 +1,19 @@
+# API
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9
+
+# ML
+mlflow==2.13.0
+lightgbm==4.3.0
+scikit-learn==1.4.2
+pandas==2.2.2
+numpy==1.26.4
+setuptools<82
+optuna
+
+# Monitoring
+prometheus-client==0.20.0
+
+# Database
+psycopg2-binary==2.9.9

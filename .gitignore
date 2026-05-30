@@ -1,0 +1,42 @@
+# Виртуальное окружение
+venv/
+env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Внутренние документы
+docs/Демонстрация.md
+
+# Airflow логи
+logs/
+
+# Jupyter чекпоинты
+.ipynb_checkpoints/
+
+# Terraform
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# MLflow
+mlruns/
+
+# Общие
+.DS_Store
+.env
+

@@ -1,0 +1,190 @@
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres_user:postgres_password@postgres:5432/feature_store
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+    AIRFLOW_CONN_FS_DEFAULT: "fs://@?path=/opt/airflow"
+    MLFLOW_TRACKING_URI: http://mlflow:5000
+    DB_HOST: postgres
+    DB_PORT: 5432
+    DB_NAME: feature_store
+    DB_USER: postgres_user
+    DB_PASSWORD: postgres_password
+    GIT_PYTHON_REFRESH: quiet
+  user: root
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs/airflow:/opt/airflow/logs
+    - ./train_model.py:/opt/airflow/train_model.py
+    - ./model-experiments:/opt/airflow/model-experiments
+    - mlflow_artifacts:/mlflow/artifacts
+    - ./monitor_and_retrain.py:/opt/airflow/monitor_and_retrain.py
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - ml_network
+
+services:
+  # База данных
+  postgres:
+    image: postgres:15
+    container_name: final-task-mlops-postgres
+    environment:
+      POSTGRES_USER: postgres_user
+      POSTGRES_PASSWORD: postgres_password
+      POSTGRES_DB: feature_store
+    ports:
+      - "5001:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./data/init.sql:/docker-entrypoint-initdb.d/01_init.sql
+      - ./model-experiments/init_mlflow.sql:/docker-entrypoint-initdb.d/02_init_mlflow.sql
+    networks:
+      - ml_network
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres_user", "-d", "feature_store"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MLflow
+  mlflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    container_name: final-task-mlops-mlflow
+    ports:
+      - "5050:5000"
+    command:
+      - --backend-store-uri
+      - postgresql+psycopg2://postgres_user:postgres_password@postgres:5432/mlflow_db
+      - --default-artifact-root
+      - /mlflow/artifacts
+      - --serve-artifacts
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ml_network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI сервис
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: final-task-mlops-app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - mlflow_artifacts:/mlflow/artifacts
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: feature_store
+      DB_USER: postgres_user
+      DB_PASSWORD: postgres_password
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - ml_network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/health').read())"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # Airflow — инициализация БД
+  airflow-init:
+    <<: *airflow-common
+    container_name: final-task-mlops-airflow-init
+    entrypoint:
+      - bash
+      - -c
+      - "airflow db migrate && airflow users create --username admin --password admin --firstname Admin --lastname Admin --role Admin --email admin@example.com"
+    restart: on-failure
+
+  # Airflow — веб-сервер
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: final-task-mlops-airflow-webserver
+    command: airflow webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Airflow — планировщик
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: final-task-mlops-airflow-scheduler
+    command: airflow scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: final-task-mlops-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yml
+    networks:
+      - ml_network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: final-task-mlops-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana.yml:/etc/grafana/provisioning/datasources/datasource.yml
+      - ./dashboards:/etc/grafana/provisioning/dashboards
+      - grafana-storage:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - ml_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  mlflow_artifacts:
+  grafana-storage:
+
+networks:
+  ml_network:
+    driver: bridge
